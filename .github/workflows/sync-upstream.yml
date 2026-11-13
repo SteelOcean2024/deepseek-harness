@@ -1,0 +1,59 @@
+# Keep this fork's `master` a fast-forward mirror of upstream master.
+#
+# Design:
+#   master : mirror of deepseek-ai/deepseek-harness master. This workflow only
+#            fast-forwards it. NEVER commit here.
+#   work   : your integration branch (the repository's default branch, and where
+#            this file lives). Scheduled workflows only run from the default
+#            branch, which is why `work` is the default.
+#
+# Local side: `bash local-build/sync-upstream.sh` pulls from this fork, then
+# merges `master` into your local `work`.
+name: Sync upstream master
+
+on:
+  schedule:
+    # Not a hard guarantee: GitHub queues scheduled runs and delays them under
+    # load. 15 minutes is the practical floor for a near-real-time mirror.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-master
+  cancel-in-progress: false
+
+jobs:
+  fast-forward-master:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Fast-forward master from upstream
+        run: |
+          set -euo pipefail
+          git config user.name  'dsh-mirror-bot'
+          git config user.email 'dsh-mirror-bot@users.noreply.github.com'
+          git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
+          git fetch --no-tags upstream master
+          before=$(git rev-parse HEAD)
+          if git merge --ff-only upstream/master; then
+            after=$(git rev-parse HEAD)
+            if [ "$before" = "$after" ]; then
+              echo "already up to date ($after)"
+            else
+              git push origin master
+              echo "master: $before -> $after"
+            fi
+          else
+            echo "::error::master is not a fast-forward of upstream/master."
+            echo "Someone committed directly on master. Restore it with:"
+            echo "  git push --force-with-lease origin upstream/master:master"
+            exit 1
+          fi
